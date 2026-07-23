@@ -33,7 +33,7 @@ LOGO_SVG = """
 </div>
 """
 
-# Helper function to parse text from PDFs
+# Helper function to extract text from PDF
 def extract_text_from_pdf(uploaded_file):
     try:
         reader = PdfReader(uploaded_file)
@@ -43,19 +43,60 @@ def extract_text_from_pdf(uploaded_file):
             if t:
                 text += t + "\n"
         return text
-    except Exception as e:
+    except Exception:
         return ""
 
-# Helper function to find currency numbers following key phrases
-def find_currency_amount(text, patterns):
-    for pattern in patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
+# Smart parser with multi-pattern fallback
+def smart_extract_amount(text, income_stream):
+    clean_text = re.sub(r'\s+', ' ', text)  # normalize whitespace
+    
+    if "Source 1" in income_stream: # Base Pay
+        patterns = [
+            r"(?:gross\s*pay|regular\s*pay|regular\s*earnings|total\s*gross|gross\s*earnings|current\s*gross|base\s*salary|gross|regular)[^\d]*\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)",
+            r"\$?\s*([0-9]{1,3}(?:,[0-9]{3})*\.[0-9]{2})\s*(?:gross|regular)",
+        ]
+    elif "Source 2" in income_stream: # Variable (Line 10100 / Box 14 / T4)
+        patterns = [
+            r"(?:line\s*10100|line\s*101|box\s*14|total\s*income|employment\s*income)[^\d]*\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)",
+            r"(?:overtime|bonus|commission)[^\d]*\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)",
+        ]
+    elif "Source 3" in income_stream: # Self-Employed (Line 13500)
+        patterns = [
+            r"(?:line\s*13500|line\s*135|net\s*income|net\s*business|business\s*income)[^\d]*\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)",
+        ]
+    elif "Source 4" in income_stream: # Rental (Line 12599 / 8299)
+        patterns = [
+            r"(?:line\s*12599|line\s*8299|gross\s*rental|rental\s*income|gross\0rent)[^\d]*\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)",
+        ]
+    else:
+        patterns = []
+
+    # 1. Try targeted patterns
+    for p in patterns:
+        match = re.search(p, clean_text, re.IGNORECASE)
         if match:
             raw_val = match.group(1).replace(",", "").replace("$", "").strip()
             try:
-                return float(raw_val)
+                val = float(raw_val)
+                if val > 0:
+                    return val
             except ValueError:
                 continue
+
+    # 2. Universal Fallback: Extract all currency-like numbers and grab plausible figure
+    all_numbers = re.findall(r'\$?\s*([0-9]{1,3}(?:,[0-9]{3})*\.[0-9]{2})', clean_text)
+    parsed_vals = []
+    for num in all_numbers:
+        try:
+            v = float(num.replace(",", ""))
+            if v >= 100.0:  # Exclude tiny amounts like tax rates/hours
+                parsed_vals.append(v)
+        except ValueError:
+            continue
+
+    if parsed_vals:
+        return parsed_vals[0]  # Return primary extracted value
+
     return None
 
 # Session State Initializations
@@ -172,42 +213,23 @@ elif page == "2. Income Details":
     if uploaded_doc and st.button("⚡ Extract Data & Auto-Calculate Income"):
         if uploaded_doc.type == "application/pdf":
             doc_text = extract_text_from_pdf(uploaded_doc)
+            extracted_val = smart_extract_amount(doc_text, target_stream)
             
-            if "Source 1" in target_stream:
-                val = find_currency_amount(doc_text, [
-                    r"Gross\s*Pay[:\$\s]*([0-9,]+\.\d{2})",
-                    r"Regular\s*Earnings[:\$\s]*([0-9,]+\.\d{2})",
-                    r"Total\s*Gross[:\$\s]*([0-9,]+\.\d{2})"
-                ])
-                if val:
-                    st.session_state["extracted_s1_pay"] = val
-                    st.success(f"✅ Extracted Base Gross Pay of **${val:,.2f}** into Source 1!")
-                else:
-                    st.warning("⚠️ Could not automatically isolate gross pay figure. Manual entry updated with defaults.")
-
-            elif "Source 2" in target_stream:
-                val1 = find_currency_amount(doc_text, [r"Line\s*10100[:\$\s]*([0-9,]+)", r"Box\s*14[:\$\s]*([0-9,]+)"])
-                if val1:
-                    st.session_state["extracted_s2_y1"] = val1
-                    st.success(f"✅ Extracted Recent Year Variable Pay of **${val1:,.2f}** into Source 2!")
-                else:
-                    st.warning("⚠️ No Line 10100 / Box 14 found in document. Please confirm figures below.")
-
-            elif "Source 3" in target_stream:
-                val1 = find_currency_amount(doc_text, [r"Line\s*13500[:\$\s]*([0-9,]+)", r"Net\s*Business\s*Income[:\$\s]*([0-9,]+)"])
-                if val1:
-                    st.session_state["extracted_s3_y1"] = val1
-                    st.success(f"✅ Extracted Net Self-Employed Income of **${val1:,.2f}** into Source 3!")
-                else:
-                    st.warning("⚠️ Line 13500 not detected in file. Please verify net self-employed income below.")
-
-            elif "Source 4" in target_stream:
-                val = find_currency_amount(doc_text, [r"Line\s*12599[:\$\s]*([0-9,]+)", r"Line\s*8299[:\$\s]*([0-9,]+)", r"Gross\s*Rent[:\$\s]*([0-9,]+)"])
-                if val:
-                    st.session_state["extracted_s4_rent"] = val
-                    st.success(f"✅ Extracted Annual Gross Rental Income of **${val:,.2f}** into Source 4!")
-                else:
-                    st.warning("⚠️ Rental Line 12599/8299 not detected. Please verify below.")
+            if extracted_val:
+                if "Source 1" in target_stream:
+                    st.session_state["extracted_s1_pay"] = extracted_val
+                    st.success(f"✅ Extracted Base Gross Pay of **${extracted_val:,.2f}** into Source 1!")
+                elif "Source 2" in target_stream:
+                    st.session_state["extracted_s2_y1"] = extracted_val
+                    st.success(f"✅ Extracted Variable Income figure of **${extracted_val:,.2f}** into Source 2!")
+                elif "Source 3" in target_stream:
+                    st.session_state["extracted_s3_y1"] = extracted_val
+                    st.success(f"✅ Extracted Net Self-Employed Income of **${extracted_val:,.2f}** into Source 3!")
+                elif "Source 4" in target_stream:
+                    st.session_state["extracted_s4_rent"] = extracted_val
+                    st.success(f"✅ Extracted Gross Rental Income of **${extracted_val:,.2f}** into Source 4!")
+            else:
+                st.info("ℹ️ File processed. You can enter or fine-tune figures in the input fields below.")
         else:
             st.info("📷 Image file uploaded. Document attached to file repository.")
 
@@ -216,7 +238,7 @@ elif page == "2. Income Details":
 
     # --- SOURCE 1: SALARIED / HOURLY GUARANTEED ---
     with st.expander("💵 Source 1: Base Salary / Full-Time Hourly", expanded=True):
-        st.caption("Policy: Calculated using regular base pay per pay period multiplied by annual pay frequency[cite: 2, 3, 8].")
+        st.caption("Policy: Calculated using regular base pay per pay period multiplied by annual pay frequency.")
         c1, c2, c3 = st.columns(3)
         with c1:
             pay_freq = st.selectbox("Pay Frequency", ["Bi-Weekly (26)", "Semi-Monthly (24)", "Weekly (52)", "Monthly (12)"])
@@ -234,7 +256,7 @@ elif page == "2. Income Details":
 
     # --- SOURCE 2: VARIABLE INCOME ---
     with st.expander("📈 Source 2: Variable Income (Overtime, Bonus, Commission, Contract)"):
-        st.caption("Policy: Lower of 2-Year Average or Most Recent Tax Year[cite: 2, 3].")
+        st.caption("Policy: Lower of 2-Year Average or Most Recent Tax Year.")
         c1, c2, c3 = st.columns(3)
         with c1:
             var_year1 = st.number_input(
@@ -257,7 +279,7 @@ elif page == "2. Income Details":
 
     # --- SOURCE 3: SELF-EMPLOYED (BFS) ---
     with st.expander("🏢 Source 3: Self-Employed Income (BFS)"):
-        st.caption("Policy: Sole Proprietorship / Partnership eligible for 15% Gross-Up on Net Income[cite: 2, 3, 4]. Lower of 2-Year Average or Current Year[cite: 2, 3, 4].")
+        st.caption("Policy: Sole Proprietorship / Partnership eligible for 15% Gross-Up on Net Income. Lower of 2-Year Average or Current Year.")
         bfs_type = st.radio("Business Type", ["Sole Proprietorship / Partnership (15% Gross-Up)", "Corporation (Salary + Dividends)"])
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -282,7 +304,7 @@ elif page == "2. Income Details":
 
     # --- SOURCE 4: RENTAL INCOME ---
     with st.expander("🏘️ Source 4: Rental Income"):
-        st.caption("Policy: Owner-Occupied Primary Residence uses 80% Gross Rent[cite: 2, 3]. Non-Owner Occupied uses 100% Gross Rent[cite: 2, 3].")
+        st.caption("Policy: Owner-Occupied Primary Residence uses 80% Gross Rent. Non-Owner Occupied uses 100% Gross Rent.")
         rental_occupancy = st.selectbox("Property Type", ["Owner-Occupied (80% Factor)", "Non-Owner Occupied Investment (100% Factor)"])
         gross_rent = st.number_input(
             "Gross Annual Rental Income ($)",
