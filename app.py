@@ -1,5 +1,7 @@
 import streamlit as st
 import datetime
+import re
+from pypdf import PdfReader
 
 st.set_page_config(
     page_title="Mortgage Intake, Income & Underwriting Engine",
@@ -31,9 +33,47 @@ LOGO_SVG = """
 </div>
 """
 
+# Helper function to parse text from PDFs
+def extract_text_from_pdf(uploaded_file):
+    try:
+        reader = PdfReader(uploaded_file)
+        text = ""
+        for page in reader.pages:
+            t = page.extract_text()
+            if t:
+                text += t + "\n"
+        return text
+    except Exception as e:
+        return ""
+
+# Helper function to find currency numbers following key phrases
+def find_currency_amount(text, patterns):
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            raw_val = match.group(1).replace(",", "").replace("$", "").strip()
+            try:
+                return float(raw_val)
+            except ValueError:
+                continue
+    return None
+
 # Session State Initializations
 if "total_eligible_income" not in st.session_state:
     st.session_state["total_eligible_income"] = 140000.0
+
+if "extracted_s1_pay" not in st.session_state:
+    st.session_state["extracted_s1_pay"] = 3000.0
+if "extracted_s2_y1" not in st.session_state:
+    st.session_state["extracted_s2_y1"] = 15000.0
+if "extracted_s2_y2" not in st.session_state:
+    st.session_state["extracted_s2_y2"] = 12000.0
+if "extracted_s3_y1" not in st.session_state:
+    st.session_state["extracted_s3_y1"] = 40000.0
+if "extracted_s3_y2" not in st.session_state:
+    st.session_state["extracted_s3_y2"] = 35000.0
+if "extracted_s4_rent" not in st.session_state:
+    st.session_state["extracted_s4_rent"] = 24000.0
 
 # --- SIDEBAR NAVIGATION ---
 st.sidebar.markdown(LOGO_SVG, unsafe_allow_html=True)
@@ -102,66 +142,154 @@ if page == "1. Client Details":
 # ==========================================
 elif page == "2. Income Details":
     st.markdown(LOGO_SVG, unsafe_allow_html=True)
-    st.title("💼 Income Details & Multi-Source Engine")
+    st.title("💼 Income Details & Automated Extraction Engine")
     st.caption("Standardized Employment & Income Guideline Policy")
     st.divider()
 
     if "client_saved_name" in st.session_state:
         st.info(f"👤 Active Client Profile: **{st.session_state['client_saved_name']}**")
 
-    st.subheader("1. Income Document Repository")
-    uploaded_docs = st.file_uploader(
-        "Upload Client Income Documents (Paystubs, T4, T1 General, NOA, POI, Lease Agreements)",
-        type=["pdf", "png", "jpg", "jpeg"],
-        accept_multiple_files=True
-    )
-    if uploaded_docs:
-        st.success(f"📁 {len(uploaded_docs)} document(s) uploaded successfully.")
+    # --- DOCUMENT UPLOAD & EXTRACTION SECTION ---
+    st.subheader("1. Document Intake & Automated Field Extraction")
+    
+    col_up1, col_up2 = st.columns([2, 1])
+    with col_up1:
+        uploaded_doc = st.file_uploader(
+            "Upload Income Document (PDF / Image: Paystub, T4, T1 General, NOA, T776, Lease)",
+            type=["pdf", "png", "jpg", "jpeg"]
+        )
+    with col_up2:
+        target_stream = st.selectbox(
+            "Assign to Income Stream:",
+            [
+                "Source 1: Base Salary / Full-Time Hourly",
+                "Source 2: Variable Income (OT, Bonus, Commission)",
+                "Source 3: Self-Employed / Business (BFS)",
+                "Source 4: Rental Income"
+            ]
+        )
+
+    if uploaded_doc and st.button("⚡ Extract Data & Auto-Calculate Income"):
+        if uploaded_doc.type == "application/pdf":
+            doc_text = extract_text_from_pdf(uploaded_doc)
+            
+            if "Source 1" in target_stream:
+                val = find_currency_amount(doc_text, [
+                    r"Gross\s*Pay[:\$\s]*([0-9,]+\.\d{2})",
+                    r"Regular\s*Earnings[:\$\s]*([0-9,]+\.\d{2})",
+                    r"Total\s*Gross[:\$\s]*([0-9,]+\.\d{2})"
+                ])
+                if val:
+                    st.session_state["extracted_s1_pay"] = val
+                    st.success(f"✅ Extracted Base Gross Pay of **${val:,.2f}** into Source 1!")
+                else:
+                    st.warning("⚠️ Could not automatically isolate gross pay figure. Manual entry updated with defaults.")
+
+            elif "Source 2" in target_stream:
+                val1 = find_currency_amount(doc_text, [r"Line\s*10100[:\$\s]*([0-9,]+)", r"Box\s*14[:\$\s]*([0-9,]+)"])
+                if val1:
+                    st.session_state["extracted_s2_y1"] = val1
+                    st.success(f"✅ Extracted Recent Year Variable Pay of **${val1:,.2f}** into Source 2!")
+                else:
+                    st.warning("⚠️ No Line 10100 / Box 14 found in document. Please confirm figures below.")
+
+            elif "Source 3" in target_stream:
+                val1 = find_currency_amount(doc_text, [r"Line\s*13500[:\$\s]*([0-9,]+)", r"Net\s*Business\s*Income[:\$\s]*([0-9,]+)"])
+                if val1:
+                    st.session_state["extracted_s3_y1"] = val1
+                    st.success(f"✅ Extracted Net Self-Employed Income of **${val1:,.2f}** into Source 3!")
+                else:
+                    st.warning("⚠️ Line 13500 not detected in file. Please verify net self-employed income below.")
+
+            elif "Source 4" in target_stream:
+                val = find_currency_amount(doc_text, [r"Line\s*12599[:\$\s]*([0-9,]+)", r"Line\s*8299[:\$\s]*([0-9,]+)", r"Gross\s*Rent[:\$\s]*([0-9,]+)"])
+                if val:
+                    st.session_state["extracted_s4_rent"] = val
+                    st.success(f"✅ Extracted Annual Gross Rental Income of **${val:,.2f}** into Source 4!")
+                else:
+                    st.warning("⚠️ Rental Line 12599/8299 not detected. Please verify below.")
+        else:
+            st.info("📷 Image file uploaded. Document attached to file repository.")
 
     st.divider()
-    st.subheader("2. Income Source Calculations")
+    st.subheader("2. Income Stream Calculations & Guideline Verification")
 
-    # Salaried / Hourly
+    # --- SOURCE 1: SALARIED / HOURLY GUARANTEED ---
     with st.expander("💵 Source 1: Base Salary / Full-Time Hourly", expanded=True):
-        pay_freq = st.selectbox("Pay Frequency", ["Bi-Weekly (26)", "Semi-Monthly (24)", "Weekly (52)", "Monthly (12)"])
-        freq_mult = 26 if "Bi-Weekly" in pay_freq else (24 if "Semi-Monthly" in pay_freq else (52 if "Weekly" in pay_freq else 12))
-        base_pay_amount = st.number_input("Gross Base Pay per Pay Period ($)", min_value=0.0, value=3000.0, step=100.0)
-        s1_annual = base_pay_amount * freq_mult
-        st.metric("Eligible Salaried Annual Income", f"${s1_annual:,.2f}")
-
-    # Variable Income
-    with st.expander("📈 Source 2: Variable Income (Overtime, Bonus, Commission, Contract)"):
-        st.caption("Policy: Lower of 2-Year Average or Most Recent Year.")
+        st.caption("Policy: Calculated using regular base pay per pay period multiplied by annual pay frequency[cite: 2, 3, 8].")
         c1, c2, c3 = st.columns(3)
         with c1:
-            var_year1 = st.number_input("Most Recent Year ($)", min_value=0.0, value=15000.0, step=1000.0)
+            pay_freq = st.selectbox("Pay Frequency", ["Bi-Weekly (26)", "Semi-Monthly (24)", "Weekly (52)", "Monthly (12)"])
+            freq_mult = 26 if "Bi-Weekly" in pay_freq else (24 if "Semi-Monthly" in pay_freq else (52 if "Weekly" in pay_freq else 12))
         with c2:
-            var_year2 = st.number_input("Previous Year ($)", min_value=0.0, value=12000.0, step=1000.0)
+            base_pay_amount = st.number_input(
+                "Gross Base Pay per Pay Period ($)",
+                min_value=0.0,
+                value=float(st.session_state.get("extracted_s1_pay", 3000.0)),
+                step=100.0
+            )
+        with c3:
+            s1_annual = base_pay_amount * freq_mult
+            st.metric("Eligible Salaried Annual Income", f"${s1_annual:,.2f}")
+
+    # --- SOURCE 2: VARIABLE INCOME ---
+    with st.expander("📈 Source 2: Variable Income (Overtime, Bonus, Commission, Contract)"):
+        st.caption("Policy: Lower of 2-Year Average or Most Recent Tax Year[cite: 2, 3].")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            var_year1 = st.number_input(
+                "Most Recent Year ($)",
+                min_value=0.0,
+                value=float(st.session_state.get("extracted_s2_y1", 15000.0)),
+                step=1000.0
+            )
+        with c2:
+            var_year2 = st.number_input(
+                "Previous Year ($)",
+                min_value=0.0,
+                value=float(st.session_state.get("extracted_s2_y2", 12000.0)),
+                step=1000.0
+            )
         with c3:
             var_avg = (var_year1 + var_year2) / 2.0
             s2_annual = min(var_avg, var_year1)
             st.metric("Eligible Variable Income", f"${s2_annual:,.2f}")
 
-    # Self-Employed (BFS)
+    # --- SOURCE 3: SELF-EMPLOYED (BFS) ---
     with st.expander("🏢 Source 3: Self-Employed Income (BFS)"):
-        st.caption("Policy: Sole Proprietor eligible for 15% Gross-Up. Lower of 2-Year Average or Current Year.")
+        st.caption("Policy: Sole Proprietorship / Partnership eligible for 15% Gross-Up on Net Income[cite: 2, 3, 4]. Lower of 2-Year Average or Current Year[cite: 2, 3, 4].")
         bfs_type = st.radio("Business Type", ["Sole Proprietorship / Partnership (15% Gross-Up)", "Corporation (Salary + Dividends)"])
         c1, c2, c3 = st.columns(3)
         with c1:
-            bfs_year1 = st.number_input("Current Year Net Income ($)", min_value=0.0, value=40000.0, step=1000.0)
+            bfs_year1 = st.number_input(
+                "Current Year Net Income ($)",
+                min_value=0.0,
+                value=float(st.session_state.get("extracted_s3_y1", 40000.0)),
+                step=1000.0
+            )
         with c2:
-            bfs_year2 = st.number_input("Previous Year Net Income ($)", min_value=0.0, value=35000.0, step=1000.0)
+            bfs_year2 = st.number_input(
+                "Previous Year Net Income ($)",
+                min_value=0.0,
+                value=float(st.session_state.get("extracted_s3_y2", 35000.0)),
+                step=1000.0
+            )
         with c3:
             bfs_base_eligible = min((bfs_year1 + bfs_year2) / 2.0, bfs_year1)
             gross_up = (bfs_base_eligible * 0.15) if "Sole" in bfs_type else 0.0
             s3_annual = bfs_base_eligible + gross_up
             st.metric("Eligible BFS Income", f"${s3_annual:,.2f}")
 
-    # Rental Income
+    # --- SOURCE 4: RENTAL INCOME ---
     with st.expander("🏘️ Source 4: Rental Income"):
-        st.caption("Policy: Owner-Occupied Primary Residence uses 80% Gross Rent.")
+        st.caption("Policy: Owner-Occupied Primary Residence uses 80% Gross Rent[cite: 2, 3]. Non-Owner Occupied uses 100% Gross Rent[cite: 2, 3].")
         rental_occupancy = st.selectbox("Property Type", ["Owner-Occupied (80% Factor)", "Non-Owner Occupied Investment (100% Factor)"])
-        gross_rent = st.number_input("Gross Annual Rental Income ($)", min_value=0.0, value=24000.0, step=1000.0)
+        gross_rent = st.number_input(
+            "Gross Annual Rental Income ($)",
+            min_value=0.0,
+            value=float(st.session_state.get("extracted_s4_rent", 24000.0)),
+            step=1000.0
+        )
         s4_annual = gross_rent * (0.80 if "Owner-Occupied" in rental_occupancy else 1.00)
         st.metric("Eligible Rental Income", f"${s4_annual:,.2f}")
 
@@ -169,7 +297,7 @@ elif page == "2. Income Details":
 
     final_eligible_income = s1_annual + s2_annual + s3_annual + s4_annual
 
-    st.subheader("📊 Annualized Eligible Income Summary Page")
+    st.subheader("📊 Annualized Eligible Income Summary")
     st.metric("Total Eligible Annual Gross Income", f"${final_eligible_income:,.2f}")
 
     if st.button("Apply Total Income to GDS/TDS Calculator"):
