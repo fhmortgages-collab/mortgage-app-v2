@@ -47,7 +47,7 @@ st.sidebar.divider()
 if page == "1. Client Details":
     st.markdown(LOGO_SVG, unsafe_allow_html=True)
     st.title("👤 Client Details")
-    st.caption("Form 524 - RBC Client Agreement & Personal Data Authorization")
+    st.caption("Form 524 - Client Agreement & Personal Data Authorization")
     st.divider()
 
     st.subheader("1. Client Personal Information")
@@ -67,14 +67,14 @@ if page == "1. Client Details":
     st.divider()
 
     st.subheader("2. Form 524 - Client Agreement & Disclosure")
-    st.caption("Royal Bank of Canada / Royal Trust Personal Information and Credit Application Consent")
+    st.caption("Personal Information and Credit Application Consent")
     
     with st.expander("📖 Click to Read Full Form 524 Terms & Conditions", expanded=False):
         st.markdown("""
         ### Personal Information Collection & Usage
         * **Collection:** You authorize the collection of financial and identity information (name, address, phone number, DOB, payment history, credit worthiness) from credit reporting agencies, financial institutions, and references.
         * **Usage:** Information will be used to verify identity, investigate personal background, open/operate accounts, determine credit eligibility, and maintain accuracy with credit reporting agencies.
-        * **Sharing:** Information may be shared with employees, service providers, credit reporting agencies, and affiliated RBC companies as permitted or required by law.
+        * **Sharing:** Information may be shared with employees, service providers, credit reporting agencies, and affiliated companies as permitted or required by law.
         * **Social Insurance Number (SIN):** If provided, your SIN may be used for tax reporting and credit agency identification.
         
         ### Credit Application & Mortgage Terms
@@ -103,7 +103,7 @@ if page == "1. Client Details":
 elif page == "2. Income Details":
     st.markdown(LOGO_SVG, unsafe_allow_html=True)
     st.title("💼 Income Details & Multi-Source Engine")
-    st.caption("Based on RBC Employment & Income Guide Version 4.0 & FPPC1-159 Policy Standards")
+    st.caption("Standardized Employment & Income Guideline Policy")
     st.divider()
 
     if "client_saved_name" in st.session_state:
@@ -182,7 +182,7 @@ elif page == "2. Income Details":
 elif page == "3. GDS/TDS Calculator":
     st.markdown(LOGO_SVG, unsafe_allow_html=True)
     st.title("🧮 GDS/TDS Calculator")
-    st.caption("RBC Retail Credit Policy (GRR20 / PBR 001) & OSFI Guideline B-20 Standards")
+    st.caption("Retail Credit Policy & OSFI Guideline B-20 Standards")
     st.divider()
 
     if "client_saved_name" in st.session_state:
@@ -206,7 +206,7 @@ elif page == "3. GDS/TDS Calculator":
     pith_c_expenses = annual_tax + annual_heat + (condo_factor * annual_condo)
 
     st.sidebar.divider()
-    st.sidebar.header("💳 Existing Obligations (RBC Policy)")
+    st.sidebar.header("💳 Existing Obligations (Policy Standards)")
     is_quebec = st.sidebar.checkbox("Quebec Resident (Credit Card Rules: 5%)", value=False)
 
     cc_balance = st.sidebar.number_input("Credit Card Balance ($)", min_value=0.0, value=5000.0)
@@ -244,7 +244,7 @@ elif page == "3. GDS/TDS Calculator":
     max_tds_pass = qual_tds <= 44.0
 
     # --- DISPLAY ---
-    st.subheader("📋 RBC Debt Carrying Cost Breakdown")
+    st.subheader("📋 Debt Carrying Cost Breakdown")
     col_a, col_b, col_c, col_d = st.columns(4)
     col_a.metric("Credit Card Monthly", f"${monthly_cc:,.2f}", f"{'5%' if is_quebec else '3%'} of balance")
     col_b.metric("Line of Credit Monthly", f"${monthly_loc:,.2f}", "3% of balance")
@@ -262,7 +262,7 @@ elif page == "3. GDS/TDS Calculator":
         m2.metric("Actual TDS", f"{actual_tds:.2f}%")
 
     with col2:
-        st.subheader("🏛️ Stress Test (OSFI B-20 / RBC Policy)")
+        st.subheader("🏛️ Stress Test (OSFI B-20 / Policy Standards)")
         st.caption(f"Qualifying Rate: **{qual_rate:.2f}%** | P&I: **${(qual_p_i/12):,.2f}/mo**")
         m3, m4 = st.columns(2)
         m3.metric("Qualifying GDS", f"{qual_gds:.2f}%", 
