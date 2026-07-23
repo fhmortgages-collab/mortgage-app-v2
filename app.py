@@ -2,7 +2,7 @@ import streamlit as st
 import datetime
 
 st.set_page_config(
-    page_title="Mortgage Underwriting & Client Intake",
+    page_title="Mortgage Intake, Income & Underwriting Engine",
     page_icon="🏠",
     layout="wide"
 )
@@ -31,16 +31,20 @@ LOGO_SVG = """
 </div>
 """
 
+# Session State Initializations
+if "total_eligible_income" not in st.session_state:
+    st.session_state["total_eligible_income"] = 140000.0
+
 # --- SIDEBAR NAVIGATION ---
 st.sidebar.markdown(LOGO_SVG, unsafe_allow_html=True)
 st.sidebar.title("📌 Navigation")
-page = st.sidebar.radio("Select Section:", ["Client Details", "GDS/TDS Calculator"])
+page = st.sidebar.radio("Select Section:", ["1. Client Details", "2. Income Details", "3. GDS/TDS Calculator"])
 st.sidebar.divider()
 
 # ==========================================
 # PAGE 1: CLIENT DETAILS & FORM 524 CONSENT
 # ==========================================
-if page == "Client Details":
+if page == "1. Client Details":
     st.markdown(LOGO_SVG, unsafe_allow_html=True)
     st.title("👤 Client Details")
     st.caption("Form 524 - RBC Client Agreement & Personal Data Authorization")
@@ -94,9 +98,88 @@ if page == "Client Details":
             st.error("❌ Please complete all mandatory fields and check both acknowledgment boxes before submitting.")
 
 # ==========================================
-# PAGE 2: GDS/TDS CALCULATOR
+# PAGE 2: INCOME DETAILS & CALCULATOR
 # ==========================================
-elif page == "GDS/TDS Calculator":
+elif page == "2. Income Details":
+    st.markdown(LOGO_SVG, unsafe_allow_html=True)
+    st.title("💼 Income Details & Multi-Source Engine")
+    st.caption("Based on RBC Employment & Income Guide Version 4.0 & FPPC1-159 Policy Standards")
+    st.divider()
+
+    if "client_saved_name" in st.session_state:
+        st.info(f"👤 Active Client Profile: **{st.session_state['client_saved_name']}**")
+
+    st.subheader("1. Income Document Repository")
+    uploaded_docs = st.file_uploader(
+        "Upload Client Income Documents (Paystubs, T4, T1 General, NOA, POI, Lease Agreements)",
+        type=["pdf", "png", "jpg", "jpeg"],
+        accept_multiple_files=True
+    )
+    if uploaded_docs:
+        st.success(f"📁 {len(uploaded_docs)} document(s) uploaded successfully.")
+
+    st.divider()
+    st.subheader("2. Income Source Calculations")
+
+    # Salaried / Hourly
+    with st.expander("💵 Source 1: Base Salary / Full-Time Hourly", expanded=True):
+        pay_freq = st.selectbox("Pay Frequency", ["Bi-Weekly (26)", "Semi-Monthly (24)", "Weekly (52)", "Monthly (12)"])
+        freq_mult = 26 if "Bi-Weekly" in pay_freq else (24 if "Semi-Monthly" in pay_freq else (52 if "Weekly" in pay_freq else 12))
+        base_pay_amount = st.number_input("Gross Base Pay per Pay Period ($)", min_value=0.0, value=3000.0, step=100.0)
+        s1_annual = base_pay_amount * freq_mult
+        st.metric("Eligible Salaried Annual Income", f"${s1_annual:,.2f}")
+
+    # Variable Income
+    with st.expander("📈 Source 2: Variable Income (Overtime, Bonus, Commission, Contract)"):
+        st.caption("Policy: Lower of 2-Year Average or Most Recent Year.")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            var_year1 = st.number_input("Most Recent Year ($)", min_value=0.0, value=15000.0, step=1000.0)
+        with c2:
+            var_year2 = st.number_input("Previous Year ($)", min_value=0.0, value=12000.0, step=1000.0)
+        with c3:
+            var_avg = (var_year1 + var_year2) / 2.0
+            s2_annual = min(var_avg, var_year1)
+            st.metric("Eligible Variable Income", f"${s2_annual:,.2f}")
+
+    # Self-Employed (BFS)
+    with st.expander("🏢 Source 3: Self-Employed Income (BFS)"):
+        st.caption("Policy: Sole Proprietor eligible for 15% Gross-Up. Lower of 2-Year Average or Current Year.")
+        bfs_type = st.radio("Business Type", ["Sole Proprietorship / Partnership (15% Gross-Up)", "Corporation (Salary + Dividends)"])
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            bfs_year1 = st.number_input("Current Year Net Income ($)", min_value=0.0, value=40000.0, step=1000.0)
+        with c2:
+            bfs_year2 = st.number_input("Previous Year Net Income ($)", min_value=0.0, value=35000.0, step=1000.0)
+        with c3:
+            bfs_base_eligible = min((bfs_year1 + bfs_year2) / 2.0, bfs_year1)
+            gross_up = (bfs_base_eligible * 0.15) if "Sole" in bfs_type else 0.0
+            s3_annual = bfs_base_eligible + gross_up
+            st.metric("Eligible BFS Income", f"${s3_annual:,.2f}")
+
+    # Rental Income
+    with st.expander("🏘️ Source 4: Rental Income"):
+        st.caption("Policy: Owner-Occupied Primary Residence uses 80% Gross Rent.")
+        rental_occupancy = st.selectbox("Property Type", ["Owner-Occupied (80% Factor)", "Non-Owner Occupied Investment (100% Factor)"])
+        gross_rent = st.number_input("Gross Annual Rental Income ($)", min_value=0.0, value=24000.0, step=1000.0)
+        s4_annual = gross_rent * (0.80 if "Owner-Occupied" in rental_occupancy else 1.00)
+        st.metric("Eligible Rental Income", f"${s4_annual:,.2f}")
+
+    st.divider()
+
+    final_eligible_income = s1_annual + s2_annual + s3_annual + s4_annual
+
+    st.subheader("📊 Annualized Eligible Income Summary Page")
+    st.metric("Total Eligible Annual Gross Income", f"${final_eligible_income:,.2f}")
+
+    if st.button("Apply Total Income to GDS/TDS Calculator"):
+        st.session_state["total_eligible_income"] = final_eligible_income
+        st.success(f"✅ Total Eligible Annual Income of **${final_eligible_income:,.2f}** locked and pushed to Section 3!")
+
+# ==========================================
+# PAGE 3: GDS/TDS CALCULATOR
+# ==========================================
+elif page == "3. GDS/TDS Calculator":
     st.markdown(LOGO_SVG, unsafe_allow_html=True)
     st.title("🧮 GDS/TDS Calculator")
     st.caption("RBC Retail Credit Policy (GRR20 / PBR 001) & OSFI Guideline B-20 Standards")
@@ -107,7 +190,8 @@ elif page == "GDS/TDS Calculator":
 
     # --- SIDEBAR INPUTS ---
     st.sidebar.header("📊 Borrower & Property Inputs")
-    gross_annual_income = st.sidebar.number_input("Eligible Annual Gross Income ($)", min_value=1.0, value=140000.0, step=5000.0)
+    default_income = float(st.session_state.get("total_eligible_income", 140000.0))
+    gross_annual_income = st.sidebar.number_input("Eligible Annual Gross Income ($)", min_value=1.0, value=default_income, step=5000.0)
     loan_amount = st.sidebar.number_input("Mortgage Loan Amount ($)", min_value=1.0, value=650000.0, step=10000.0)
     contract_rate = st.sidebar.number_input("Contract Rate (%)", min_value=0.1, max_value=15.0, value=4.25, step=0.05)
     amortization_years = st.sidebar.slider("Amortization (Years)", min_value=5, max_value=30, value=25)
